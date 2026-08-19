@@ -1,11 +1,5 @@
-# 爬蟲與自動化核心
 playwright>=1.40.0
-
-# 資料處理與清洗
 pandas>=2.0.0
-
-# HTTP 請求與 Webhook 警報發送
 requests>=2.31.0
-
-# 定時排程輔助 (可選)
 schedule>=1.2.0
+beautifulsoup4>=4.12.0
