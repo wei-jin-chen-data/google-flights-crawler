@@ -5,7 +5,7 @@ Google Flights 自動化監測系統 - 技術架構檔案
 本系統採用模組化與分層設計，結合現代化網頁自動化技術與定時排程機制，定時抓取 Google Flights 的航班價格、時間、轉機次數與行李額度，並進行結構化輸出與警報通知。
 
 Plaintext
-[ 定時排程器 (scheduler.py) ] 
+[ 定時排程器 (GitHub actions) ] 
        │ (定時觸發)
        ▼
 [ 核心監測引擎 (main.py / FlightMonitorEngine) ]
@@ -30,7 +30,7 @@ Plaintext
 
 HTTP 請求 ：Requests (負責發送遠端 Webhook 警報通知)
 
-排程管理 ：內建或自定義定時觸發機制 (scheduler.py)
+排程管理 ：自定義定時觸發機制 (GitHub actions)
 
 3. 核心模組與職責 
 A. 設定管理 (config.json)
