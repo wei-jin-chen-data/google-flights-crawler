@@ -586,7 +586,7 @@ class FlightMonitorEngine:
 
                         logging.info(
                             f"[{day_idx + 1}/{days_ahead}] {origin}->{destination} | "
-                            f"{dep_date} ~ {ret_date} 最低價: 台幣 {res['total_price']}(未稅) | "
+                            f"{dep_date} ~ {ret_date} 最低價: 台幣 {res['total_price']}(含稅) | "
                             f"(去) {res['outbound_airline']} {res['outbound_flight_number']} {res['outbound_stops']} {res['outbound_time']} | "
                             f"(回) {res['inbound_airline']} {res['inbound_flight_number']} {res['inbound_stops']} {res['inbound_time']} | "
                             f"[去程行李: {res['outbound_baggage']}] [回程行李: {res['inbound_baggage']}]"
