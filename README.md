@@ -1,42 +1,29 @@
 # Google Flights 自動化監測系統
 
-本系統為基於 Python 與 Playwright 開發的高效能機票價格自動監測引擎，支援多航線、動態天數、去回程詳細時間與價格抓取，並具備自動日誌記錄與 Webhook 警報功能。
+本系統為基於 Python 與 Playwright 開發的高效能機票價格自動監測系統，已全面結合 **GitHub Actions 雲端自動化架構**。部署後將由雲端伺服器全天候自動執行，無須佔用個人電腦資源或保持電腦開機。
 
 ---
 
-## 🛠️ 環境需求 (Prerequisites)
-* **Python** 版本：`3.8` 或以上（完全支援至 Python 3.14 最新版本）
-* **作業系統**：Windows 10/11、macOS、Linux (Ubuntu 20.04+)
+##  系統亮點
+
+*  **全雲端託管**：由 GitHub Actions 代為執行，每日定時自動抓取最新航班數據。
+*  **多格式數據打包**：每次執行皆會自動產出 **CSV / JSON** 數據與 **Logs（日誌檔）**。
+*  **多航線與彈性設定**：支援多航線、動態天數、去回程詳細時間與價格抓取。
+*  **免本機維護**：不需在個人電腦安裝 Python 或爬蟲環境，隨手開啟網頁即可取得資料。
 
 ---
 
-## 🚀 一鍵部署與安裝指南 (Deployment Guide)
+## 快速取得監測資料 
 
-1. **安裝 Python**（若電腦未安裝）：
-   請至 [Python 官網](https://www.python.org/downloads/) 下載並安裝 Python 3.8 或以上版本。
-   *(⚠️ 注意：Windows 用戶在安裝時，務必勾選「Add Python to PATH」)*
+爬蟲完成後，數據會自動打包儲存在 GitHub 的 Artifacts 中：
 
-2. **複製或下載專案至本機資料夾**：
-   確認資料夾內包含 `main.py`、`config.json` 與 `requirements.txt`。
+1. 點擊本專案頁面上方的 **[Actions]** 分頁。
+2. 點選列表中的最新成功執行紀錄（帶有綠色勾勾 `Flight Monitor (Windows)`）。
+3. 頁面拉至最底部 **Artifacts** 區塊，點擊 **`flight-data-windows`** 即可下載包含 CSV、JSON 與 Logs 的壓縮檔。
 
-3. **切換終端機目錄並安裝依賴套件**：
-   開啟終端機 (Terminal / PowerShell)，**務必先將路徑切換至專案所在的資料夾**，再執行安裝指令：
-   ```bash
-   # 請將下方路徑替換為你實際存放專案的資料夾位置
-   cd /path/to/your/project_folder
+---
 
-   # 安裝 Python 依賴套件
-   pip install -r requirements.txt
+##  詳細技術手冊
 
-4. **安裝 自動化瀏覽器驅動**：
-   套件安裝完成後，須執行以下指令，讓系統下載爬蟲需要的 Chromium 瀏覽器
-   ```bash
-   playwright install chromium
-   如果上述指令無效，請嘗試輸入
-    ```bash
-   python3 -m playwright install chromium
-
-5. **執行說明**：
-   請根據您的作業系統與終端機環境，選擇以下其中一種指令來手動執行：
-   推薦方式（若終端機同時安裝多個版本，建議優先嘗試此指令）：
-   python3 main.py
+關於專案初始化、Git 推送指令、手動觸發測試與系統維護說明，請參閱：
+ **[DEPLOYMENT.md]**
