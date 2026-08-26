@@ -15,8 +15,8 @@ git add .
 # 3. 提交版本說明
 git commit -m "Initial commit for flight monitor"
 
-# 4. 連接至您的 GitHub 倉庫 (請將網址替換為您的倉庫連結)
-git remote add origin https://github.com/您的帳號/您的倉庫名稱.git
+# 4. 連接至您的 GitHub 倉庫 (請將網址替換為倉庫連結)
+git remote add origin https://github.com/帳號/倉庫名稱.git
 
 # 5. 推送至 GitHub (首次執行會跳出瀏覽器視窗，請點選 Sign in with your browser)
 git branch -M main
