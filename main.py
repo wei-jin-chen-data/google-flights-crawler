@@ -561,13 +561,17 @@ class FlightMonitorEngine:
 
                     if res and "error" not in res:
                         self.success_count += 1
+                        
+                        # 💡 統一將價格格式化，讓終端機 Log 與匯出的 JSON/CSV 格式完全一致
+                        formatted_price = f"台幣 {res['total_price']}(含稅)"
+
                         data_row = {
                             "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S:%f")[:-3],
                             "origin": origin,
                             "destination": destination,
                             "departure_date": dep_date,
                             "return_date": ret_date,
-                            "lowest_price": res["total_price"],
+                            "lowest_price": formatted_price,
                             "outbound_airline": res["outbound_airline"],
                             "inbound_airline": res["inbound_airline"],
                             "outbound_flight_number": res["outbound_flight_number"],
@@ -586,7 +590,7 @@ class FlightMonitorEngine:
 
                         logging.info(
                             f"[{day_idx + 1}/{days_ahead}] {origin}->{destination} | "
-                            f"{dep_date} ~ {ret_date} 最低價: 台幣 {res['total_price']}(含稅) | "
+                            f"{dep_date} ~ {ret_date} 最低價: {formatted_price} | "
                             f"(去) {res['outbound_airline']} {res['outbound_flight_number']} {res['outbound_stops']} {res['outbound_time']} | "
                             f"(回) {res['inbound_airline']} {res['inbound_flight_number']} {res['inbound_stops']} {res['inbound_time']} | "
                             f"[去程行李: {res['outbound_baggage']}] [回程行李: {res['inbound_baggage']}]"

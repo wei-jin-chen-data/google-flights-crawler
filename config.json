@@ -3,14 +3,14 @@
     {
       "origin": "TPE",
       "destination": "NRT",
-      "days_ahead": 5,
+      "days_ahead": 2,
       "trip_length_days": 7,
       "cabin_class": "Economy"
     },
     {
       "origin": "TPE",
       "destination": "JFK",
-      "days_ahead": 5,
+      "days_ahead": 2,
       "trip_length_days": 14,
       "cabin_class": "Economy"
     }
