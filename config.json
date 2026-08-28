@@ -30,7 +30,7 @@
     "export_format": ["json", "csv"]
   },
     "notification": {
-    "webhook_url": "",
+    "webhook_url": "https://discordapp.com/api/webhooks/1542832534327402526/xEI8epS46tLu9KWOisT3Ir9czts03L_hCwbzJxgUGt2TsQi4Fz0JASfhpfFpjEbLXhKY",
     "enable_alert_on_failure": true
   }
 }
