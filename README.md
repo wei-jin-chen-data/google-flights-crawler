@@ -27,3 +27,18 @@
 
 關於專案初始化、Git 推送指令、手動觸發測試與系統維護說明，請參閱：
  **[DEPLOYMENT.md]**
+
+ Markdown
+## 🔔 接收 Discord 錯誤通知設定與測試流程
+
+若系統在抓取航班資料時遇到異常或超過重試上限，會自動發送即時警報至指定的 Discord 頻道。請依照以下步驟進行設定與本機測試：
+
+##  設定 Discord Webhook 網址
+1. 在您的 Discord 伺服器中建立或選擇一個文字頻道（例如 `#flight-alerts`）。
+2. 點擊頻道旁邊的齒輪（編輯頻道）進入設定，點選 **整合** > **建立 Webhook**。
+3. 自訂機器人名稱並複製產生的 **Webhook 網址**。
+4. 打開專案中的 **`config.json`**，將網址填入 `webhook_url` 欄位中
+   "notification": {
+     "webhook_url": "Discord_Webhook網址",
+     "enable_alert_on_failure": true
+   }
