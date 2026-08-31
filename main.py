@@ -21,7 +21,7 @@ os.makedirs(CONFIG["output"]["data_dir"], exist_ok=True)
 os.makedirs(CONFIG["output"]["logs_dir"], exist_ok=True)
 os.makedirs("./debug", exist_ok=True)
 
-# 設定 Logging (移除過程細節訊息，精簡輸出)
+# 設定 Logging (精簡輸出)
 log_filename = os.path.join(
     CONFIG["output"]["logs_dir"],
     f"flight_monitor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
@@ -60,11 +60,10 @@ class FlightMonitorEngine:
             logging.error(f"⚠️ Webhook 發送失敗: {str(e)}")
 
     def clean_airline_name(self, raw_airline_text):
-        """💡 修正：嚴格只抓取第一個出現的主要航空公司名稱"""
+        """💡 嚴格只抓取第一個出現的主要航空公司名稱"""
         if not raw_airline_text:
             return "未知航司"
 
-        # 依照順序比對，只要在文字中先找到哪一個，就直接回傳那一個
         known_airlines = [
             "中華航空", "長榮航空", "星宇航空", "樂桃航空", "台灣虎航",
             "酷航", "捷星日本", "捷星日本航空", "捷星航空", "捷星",
@@ -72,10 +71,9 @@ class FlightMonitorEngine:
             "韓亞航空", "香港航空", "國泰航空", "巴迪航空", "大灣區航空",
             "亞洲航空", "AirAsia", "泰國獅子航空", "泰國獅航", "泰獅航",
             "新加坡航空", "越南航空", "達美航空", "菲律賓航空", "德威航空", "泰瑞航空",
-            "美國航空"
+            "美國航空", "阿拉斯加航空"
         ]
 
-        # 為了確保抓到「第一個」，我們檢查字串中每個已知航司出現的索引位置
         found_matches = []
         for airline in known_airlines:
             idx = raw_airline_text.find(airline)
@@ -83,11 +81,9 @@ class FlightMonitorEngine:
                 found_matches.append((idx, airline))
 
         if found_matches:
-            # 依照在字串中出現的先後順序排序（index 最小的代表最前面）
             found_matches.sort(key=lambda x: x[0])
             return found_matches[0][1]
 
-        # 如果不在清單內，濾除雜訊後取第一段
         cleaned = re.sub(r"分段購票.*?(?=機票|$)", "", raw_airline_text)
         cleaned = cleaned.replace("你將分段購買這趟行程的機票", "")
         cleaned = re.split(r"(\d+\s*小時|轉機|\b[A-Z]{3}\b|,|・)", cleaned)[0]
@@ -202,11 +198,11 @@ class FlightMonitorEngine:
             pass
         return card_element
 
-    def extract_flight_number_from_page_data(self, page, card_element):
-        """💡 修正：嚴格只抓取第一個（最上方或最早出現）的航班編號"""
+    def extract_flight_number_from_page_data(self, page, container):
+        """💡 嚴格限制在該卡片容器內，抓取第一個出現的航班編號"""
         try:
-            # 優先從展開的 DOM 畫面上抓第一個航班編號
-            elements = page.query_selector_all('span.Xsgmwe.QS0io')
+            # 優先從當前點擊容器內尋找航班編號元素
+            elements = container.query_selector_all('span.Xsgmwe.QS0io')
             for el in elements:
                 if not self._visible(el):
                     continue
@@ -214,13 +210,14 @@ class FlightMonitorEngine:
                 if re.fullmatch(r'[A-Z0-9]{2}\s*\d{1,4}', text):
                     return re.sub(r'\s+', ' ', text)
 
-            # 若 DOM 抓不到，改從網頁原始碼抓取第一個符合的航班編號
-            html = page.content()
-            pattern = re.compile(r'\["([A-Z0-9]{2})","(\d{1,4})",null,"([^"]+)"\]')
-            match = pattern.search(html)
-            if match:
-                code, number, _ = match.groups()
-                return f"{code} {number}"
+            # 若容器內找不到，備用全頁尋找（只比對第一個）
+            elements_all = page.query_selector_all('span.Xsgmwe.QS0io')
+            for el in elements_all:
+                if not self._visible(el):
+                    continue
+                text = self.normalize_text(el.evaluate("el => el.textContent"))
+                if re.fullmatch(r'[A-Z0-9]{2}\s*\d{1,4}', text):
+                    return re.sub(r'\s+', ' ', text)
         except Exception:
             pass
         return "航班編號未明"
@@ -233,7 +230,7 @@ class FlightMonitorEngine:
             "件行李", "沒有託運行李"
         )
         try:
-            html_content = root_element.evaluate("el => el.outerHTML")
+            html_content = root_element.evaluate("el => el.outerHTML") if hasattr(root_element, 'evaluate') else str(root_element)
             soup = BeautifulSoup(html_content, 'html.parser')
             items = soup.select("li.oi0btb, li, [aria-label*='行李'], [aria-label*='免費']")
             for item in items:
@@ -301,8 +298,8 @@ class FlightMonitorEngine:
                 except Exception:
                     time.sleep(1)
 
-            # 呼叫修改後的獨立方法精準取得第一個航班編號
-            flight_number = self.extract_flight_number_from_page_data(page, card_element)
+            # 💡 此處將容器傳入，確保抓取當前卡片第一段航程的航班編號
+            flight_number = self.extract_flight_number_from_page_data(page, container)
 
         except Exception:
             flight_number = "航班編號未明"
@@ -314,31 +311,32 @@ class FlightMonitorEngine:
         }
 
     def extract_lowest_tier_baggage_by_section(self, page):
+        """💡 兼顧全頁預設 DOM 抓取與獨立去回程區塊比對的相容函數"""
         outbound_baggage = ""
         inbound_baggage = ""
         try:
             try:
-                page.wait_for_selector("ul.BABTTc, div.gi0tie, div.OabD8b, div.gQ6yfe", timeout=5000)
+                page.wait_for_selector("ul.BABTTc, div.gi0tie, div.OabD8b, div.gQ6yfe", timeout=6000)
             except Exception:
                 time.sleep(2)
 
-            containers = page.query_selector_all("div.gi0tie")
-            has_explicit_sections = False
+            containers = page.query_selector_all("div.gi0tie, div.OabD8b, div.Rk10dc, div.vJRrcb")
             for container in containers:
                 if not self._visible(container):
                     continue
-                text_content = container.inner_text()
-                if "去程航班" in text_content or "回程航班" in text_content:
-                    has_explicit_sections = True
-                    bag_candidates = self._extract_baggage_candidates(container)
-                    bag_str = "、".join(bag_candidates) if bag_candidates else ""
-                    
-                    if "去程航班" in text_content and not outbound_baggage:
-                        outbound_baggage = bag_str
-                    elif "回程航班" in text_content and not inbound_baggage:
-                        inbound_baggage = bag_str
+                c_text = container.inner_text()
+                
+                if "去程航班" in c_text and not outbound_baggage:
+                    bag_cands = self._extract_baggage_candidates(container)
+                    if bag_cands:
+                        outbound_baggage = "、".join(bag_cands)
+                        
+                if "回程航班" in c_text and not inbound_baggage:
+                    bag_cands = self._extract_baggage_candidates(container)
+                    if bag_cands:
+                        inbound_baggage = "、".join(bag_cands)
 
-            if not has_explicit_sections or (not outbound_baggage and not inbound_baggage):
+            if not outbound_baggage and not inbound_baggage:
                 lists = page.query_selector_all("ul.BABTTc")
                 visible_lists = [l for l in lists if self._visible(l)]
                 if visible_lists:
@@ -356,10 +354,16 @@ class FlightMonitorEngine:
                             shared_bag = "、".join(cands)
                             outbound_baggage = shared_bag
                             inbound_baggage = shared_bag
+
+            if outbound_baggage and not inbound_baggage:
+                inbound_baggage = outbound_baggage
+            elif inbound_baggage and not outbound_baggage:
+                outbound_baggage = inbound_baggage
+
         except Exception:
             pass
 
-        return outbound_baggage, inbound_baggage
+        return outbound_baggage or "行李額度未明", inbound_baggage or "行李額度未明"
 
     def log_debug_snapshot(self, page, tag):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -456,10 +460,21 @@ class FlightMonitorEngine:
                 outbound_baggage = page_out_bag if page_out_bag else "行李額度未明"
                 inbound_baggage = page_in_bag if page_in_bag else "行李額度未明"
 
+                outbound_airline = outbound_info["airline"]
+                inbound_airline = inbound_info["airline"]
+
+                # 💡 特殊邏輯：泰國獅航行李覆蓋規則
+                lion_keywords = ["泰國獅子航空", "泰國獅航", "泰獅航"]
+                is_lion_air = any(k in outbound_airline for k in lion_keywords) or any(k in inbound_airline for k in lion_keywords)
+
+                if is_lion_air:
+                    outbound_baggage = "免費攜帶 1 件手提行李"
+                    inbound_baggage = "免費攜帶 1 件手提行李"
+
                 return {
                     "total_price": outbound_info["price"],
-                    "outbound_airline": outbound_info["airline"],
-                    "inbound_airline": inbound_info["airline"],
+                    "outbound_airline": outbound_airline,
+                    "inbound_airline": inbound_airline,
                     "outbound_flight_number": outbound_info["flight_number"],
                     "inbound_flight_number": inbound_info["flight_number"],
                     "outbound_baggage": outbound_baggage,
@@ -562,7 +577,6 @@ class FlightMonitorEngine:
                     if res and "error" not in res:
                         self.success_count += 1
                         
-                        # 💡 統一將價格格式化，讓終端機 Log 與匯出的 JSON/CSV 格式完全一致
                         formatted_price = f"台幣 {res['total_price']}(含稅)"
 
                         data_row = {
@@ -591,7 +605,7 @@ class FlightMonitorEngine:
                         logging.info(
                             f"[{day_idx + 1}/{days_ahead}] {origin}->{destination} | "
                             f"{dep_date} ~ {ret_date} 最低價: {formatted_price} | "
-                            f"(去) {res['outbound_airline']} {res['outbound_flight_number']} {res['outbound_stops']} {res['outbound_time']} | "
+                            f"(去) {res['outbound_airline']} {res['outbound_flight_number']} {res['outbound_stops']} {res['time_str'] if 'time_str' in res else res['outbound_time']} | "
                             f"(回) {res['inbound_airline']} {res['inbound_flight_number']} {res['inbound_stops']} {res['inbound_time']} | "
                             f"[去程行李: {res['outbound_baggage']}] [回程行李: {res['inbound_baggage']}]"
                         )
