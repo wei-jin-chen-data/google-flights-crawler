@@ -7,6 +7,11 @@ on:
     - cron: '0 0,6,12,18 * * *'
   workflow_dispatch: # 允許隨時手動點擊執行
 
+# 💡 關鍵修正：加入 permissions 設定，允許下載跨次 Workflow 的 Artifacts
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   build:
     runs-on: windows-latest  # 指定使用 Windows 雲端環境
