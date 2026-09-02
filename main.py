@@ -21,17 +21,15 @@ os.makedirs(CONFIG["output"]["data_dir"], exist_ok=True)
 os.makedirs(CONFIG["output"]["logs_dir"], exist_ok=True)
 os.makedirs("./debug", exist_ok=True)
 
-# 設定 Logging (精簡輸出)
-log_filename = os.path.join(
-    CONFIG["output"]["logs_dir"],
-    f"flight_monitor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
-)
+# 固定 Log 檔名以利跨次追加
+log_filename = os.path.join(CONFIG["output"]["logs_dir"], "flight_monitor.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s][%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler(log_filename, encoding="utf-8"),
+        logging.FileHandler(log_filename, mode="a", encoding="utf-8"),
         logging.StreamHandler(),
     ],
 )
@@ -60,7 +58,6 @@ class FlightMonitorEngine:
             logging.error(f"⚠️ Webhook 發送失敗: {str(e)}")
 
     def clean_airline_name(self, raw_airline_text):
-        """💡 嚴格只抓取第一個出現的主要航空公司名稱"""
         if not raw_airline_text:
             return "未知航司"
 
@@ -160,6 +157,31 @@ class FlightMonitorEngine:
         match = re.search(r"(US\$\s?[\d,]+|NT\$\s?[\d,]+|\$\s?[\d,]+)", raw_text)
         return match.group(1).strip() if match else "NT$0"
 
+    def parse_price_numeric(self, raw_text):
+        price_str = self.parse_price(raw_text)
+        nums = re.findall(r"\d+", price_str)
+        if nums:
+            return int("".join(nums))
+        return float("inf")
+
+    def get_cheapest_card(self, cards):
+        if not cards:
+            return None
+        cheapest_card = cards[0]
+        min_price = float("inf")
+
+        for card in cards:
+            try:
+                raw_text = self.normalize_text(card.inner_text())
+                price_val = self.parse_price_numeric(raw_text)
+                if price_val < min_price:
+                    min_price = price_val
+                    cheapest_card = card
+            except Exception:
+                continue
+
+        return cheapest_card
+
     def extract_basic_card_details(self, card_element):
         raw_text = self.normalize_text(card_element.inner_text())
         duration_el = card_element.query_selector("div.gvkrdb")
@@ -199,9 +221,7 @@ class FlightMonitorEngine:
         return card_element
 
     def extract_flight_number_from_page_data(self, page, container):
-        """💡 嚴格限制在該卡片容器內，抓取第一個出現的航班編號"""
         try:
-            # 優先從當前點擊容器內尋找航班編號元素
             elements = container.query_selector_all('span.Xsgmwe.QS0io')
             for el in elements:
                 if not self._visible(el):
@@ -210,7 +230,6 @@ class FlightMonitorEngine:
                 if re.fullmatch(r'[A-Z0-9]{2}\s*\d{1,4}', text):
                     return re.sub(r'\s+', ' ', text)
 
-            # 若容器內找不到，備用全頁尋找（只比對第一個）
             elements_all = page.query_selector_all('span.Xsgmwe.QS0io')
             for el in elements_all:
                 if not self._visible(el):
@@ -298,7 +317,6 @@ class FlightMonitorEngine:
                 except Exception:
                     time.sleep(1)
 
-            # 💡 此處將容器傳入，確保抓取當前卡片第一段航程的航班編號
             flight_number = self.extract_flight_number_from_page_data(page, container)
 
         except Exception:
@@ -311,7 +329,6 @@ class FlightMonitorEngine:
         }
 
     def extract_lowest_tier_baggage_by_section(self, page):
-        """💡 兼顧全頁預設 DOM 抓取與獨立去回程區塊比對的相容函數"""
         outbound_baggage = ""
         inbound_baggage = ""
         try:
@@ -365,20 +382,6 @@ class FlightMonitorEngine:
 
         return outbound_baggage or "行李額度未明", inbound_baggage or "行李額度未明"
 
-    def log_debug_snapshot(self, page, tag):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        try:
-            html_path = os.path.join("debug", f"{tag}_{timestamp}.html")
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(page.content())
-        except Exception:
-            pass
-        try:
-            png_path = os.path.join("debug", f"{tag}_{timestamp}.png")
-            page.screenshot(path=png_path, full_page=False)
-        except Exception:
-            pass
-
     def get_flight_cards(self, page):
         cards = page.query_selector_all("div.yR1fYc")
         return cards if cards else page.query_selector_all('li[role="listitem"]')
@@ -399,103 +402,108 @@ class FlightMonitorEngine:
         except Exception:
             raise
 
+    def process_single_flight_option(self, context, url, target_type="cheapest"):
+        page = context.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.wait_for_selector("div.yR1fYc", timeout=15000)
+            except PlaywrightTimeoutError:
+                raise Exception("Google Flights 機票卡片載入逾時")
+
+            page.mouse.wheel(0, 300)
+            time.sleep(1.5)
+
+            body_text = self.normalize_text(page.locator("body").inner_text())
+            if "系統發生錯誤" in body_text or "重新載入" in body_text:
+                raise Exception("Google Flights 顯示系統錯誤頁")
+
+            outbound_cards = self.get_flight_cards(page)
+            if not outbound_cards:
+                raise Exception("未能在去程頁面找到機票卡片")
+
+            target_outbound_card = outbound_cards[0] if target_type == "best" else self.get_cheapest_card(outbound_cards)
+            outbound_info = self.extract_basic_card_details(target_outbound_card)
+            outbound_extra = self.extract_expanded_details(page, target_outbound_card)
+            outbound_info.update(outbound_extra)
+
+            self.click_selected_card(target_outbound_card)
+            time.sleep(2.5)
+
+            try:
+                page.wait_for_selector("div.yR1fYc", state="visible", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+
+            time.sleep(1.5)
+
+            inbound_cards = self.get_flight_cards(page)
+            if not inbound_cards:
+                inbound_cards = page.query_selector_all('li[role="listitem"]')
+
+            if not inbound_cards:
+                raise Exception("進入回程頁後找不到回程機票卡片")
+
+            target_inbound_card = inbound_cards[0] if target_type == "best" else self.get_cheapest_card(inbound_cards)
+            inbound_info = self.extract_basic_card_details(target_inbound_card)
+            inbound_extra = self.extract_expanded_details(page, target_inbound_card)
+            inbound_info.update(inbound_extra)
+
+            self.click_selected_card(target_inbound_card)
+            time.sleep(3.5)
+
+            page_out_bag, page_in_bag = self.extract_lowest_tier_baggage_by_section(page)
+
+            return {
+                "total_price": outbound_info["price"],
+                "outbound_airline": outbound_info["airline"],
+                "inbound_airline": inbound_info["airline"],
+                "outbound_flight_number": outbound_info["flight_number"],
+                "inbound_flight_number": inbound_info["flight_number"],
+                "outbound_baggage": page_out_bag or "行李額度未明",
+                "inbound_baggage": page_in_bag or "行李額度未明",
+                "outbound_time": outbound_info["time_str"],
+                "inbound_time": inbound_info["time_str"],
+                "outbound_duration": outbound_info["duration"],
+                "inbound_duration": inbound_info["duration"],
+                "outbound_stops": outbound_info["stops"],
+                "inbound_stops": inbound_info["stops"],
+            }
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
+
     def fetch_round_trip_flight(self, context, url):
         retries = self.settings["max_retries"]
         delay = self.settings["retry_delay_seconds"]
         last_error = ""
 
         for attempt in range(1, retries + 1):
-            page = None
             try:
-                page = context.new_page()
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                try:
-                    page.wait_for_selector("div.yR1fYc", timeout=15000)
-                except PlaywrightTimeoutError:
-                    raise Exception("Google Flights 機票卡片載入逾時")
+                cheapest_res = self.process_single_flight_option(context, url, target_type="cheapest")
+                best_res = self.process_single_flight_option(context, url, target_type="best")
 
-                page.mouse.wheel(0, 300)
-                time.sleep(1.5)
+                is_identical = (
+                    cheapest_res["total_price"] == best_res["total_price"]
+                    and cheapest_res["outbound_flight_number"] == best_res["outbound_flight_number"]
+                    and cheapest_res["inbound_flight_number"] == best_res["inbound_flight_number"]
+                    and cheapest_res["outbound_time"] == best_res["outbound_time"]
+                    and cheapest_res["inbound_time"] == best_res["inbound_time"]
+                )
 
-                body_text = self.normalize_text(page.locator("body").inner_text())
-                if "系統發生錯誤" in body_text or "重新載入" in body_text:
-                    raise Exception("Google Flights 顯示系統錯誤頁")
-
-                outbound_cards = self.get_flight_cards(page)
-                if not outbound_cards:
-                    raise Exception("未能在去程頁面找到機票卡片")
-
-                target_outbound_card = outbound_cards[0]
-                outbound_info = self.extract_basic_card_details(target_outbound_card)
-                outbound_extra = self.extract_expanded_details(page, target_outbound_card)
-                outbound_info.update(outbound_extra)
-
-                self.click_selected_card(target_outbound_card)
-                time.sleep(2.5)
-
-                try:
-                    page.wait_for_selector("div.yR1fYc", state="visible", timeout=15000)
-                except PlaywrightTimeoutError:
-                    pass
-
-                time.sleep(1.5)
-
-                inbound_cards = self.get_flight_cards(page)
-                if not inbound_cards:
-                    inbound_cards = page.query_selector_all('li[role="listitem"]')
-
-                if not inbound_cards:
-                    raise Exception("進入回程頁後找不到回程機票卡片")
-
-                target_inbound_card = inbound_cards[0]
-                inbound_info = self.extract_basic_card_details(target_inbound_card)
-                inbound_extra = self.extract_expanded_details(page, target_inbound_card)
-                inbound_info.update(inbound_extra)
-
-                self.click_selected_card(target_inbound_card)
-                time.sleep(3.5)
-
-                page_out_bag, page_in_bag = self.extract_lowest_tier_baggage_by_section(page)
-
-                outbound_baggage = page_out_bag if page_out_bag else "行李額度未明"
-                inbound_baggage = page_in_bag if page_in_bag else "行李額度未明"
-
-                outbound_airline = outbound_info["airline"]
-                inbound_airline = inbound_info["airline"]
-
-                # 💡 特殊邏輯：泰國獅航行李覆蓋規則
-                lion_keywords = ["泰國獅子航空", "泰國獅航", "泰獅航"]
-                is_lion_air = any(k in outbound_airline for k in lion_keywords) or any(k in inbound_airline for k in lion_keywords)
-
-                if is_lion_air:
-                    outbound_baggage = "免費攜帶 1 件手提行李"
-                    inbound_baggage = "免費攜帶 1 件手提行李"
+                if is_identical:
+                    best_res = cheapest_res.copy()
 
                 return {
-                    "total_price": outbound_info["price"],
-                    "outbound_airline": outbound_airline,
-                    "inbound_airline": inbound_airline,
-                    "outbound_flight_number": outbound_info["flight_number"],
-                    "inbound_flight_number": inbound_info["flight_number"],
-                    "outbound_baggage": outbound_baggage,
-                    "inbound_baggage": inbound_baggage,
-                    "outbound_time": outbound_info["time_str"],
-                    "inbound_time": inbound_info["time_str"],
-                    "outbound_duration": outbound_info["duration"],
-                    "inbound_duration": inbound_info["duration"],
-                    "outbound_stops": outbound_info["stops"],
-                    "inbound_stops": inbound_info["stops"],
+                    "cheapest": cheapest_res,
+                    "best": best_res,
+                    "is_identical": is_identical
                 }
 
             except Exception as e:
                 last_error = str(e)
-                if page:
-                    self.log_debug_snapshot(page, f"attempt_{attempt}")
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
-
                 if attempt < retries:
                     time.sleep(delay)
                 else:
@@ -504,31 +512,88 @@ class FlightMonitorEngine:
                             f"🚨 [機票監測失敗] 抓取 URL 失敗超越重試上限: {url} | 原因: {last_error}"
                         )
                     return {"error": last_error}
-            else:
-                try:
-                    page.close()
-                except Exception:
-                    pass
+
         return {"error": "未知錯誤"}
 
     def save_data(self):
+        """💡 縱向分段追加（最低價與最佳方案分為獨立兩列）"""
         if not self.all_results:
             logging.warning("⚠️ 沒有抓取到任何資料，跳過匯出。")
             return
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rows_to_save = []
+        for result in self.all_results:
+            common_info = {
+                "scraped_at": result["scraped_at"],
+                "origin": result["origin"],
+                "destination": result["destination"],
+                "departure_date": result["departure_date"],
+                "return_date": result["return_date"],
+                "is_identical": result["is_best_and_cheapest_identical"],
+                "url": result["url"],
+            }
 
+            # 1. 第一列：最低價方案
+            cheap_row = common_info.copy()
+            cheap_row.update({
+                "option_type": "最低價方案",
+                "price": result["lowest_price"],
+                "outbound_airline": result["outbound_airline"],
+                "inbound_airline": result["inbound_airline"],
+                "outbound_flight_number": result["outbound_flight_number"],
+                "inbound_flight_number": result["inbound_flight_number"],
+                "outbound_stops": result["outbound_stops"],
+                "inbound_stops": result["inbound_stops"],
+                "outbound_baggage": result["outbound_baggage"],
+                "inbound_baggage": result["inbound_baggage"],
+                "outbound_time": result["outbound_time"],
+                "inbound_time": result["inbound_time"],
+            })
+            rows_to_save.append(cheap_row)
+
+            # 2. 第二列：最佳方案
+            best_row = common_info.copy()
+            best_row.update({
+                "option_type": "最佳方案" if not result["is_best_and_cheapest_identical"] else "最佳方案(與最低價相同)",
+                "price": result["best_price"],
+                "outbound_airline": result["best_outbound_airline"],
+                "inbound_airline": result["best_inbound_airline"],
+                "outbound_flight_number": result["best_outbound_flight_number"],
+                "inbound_flight_number": result["best_inbound_flight_number"],
+                "outbound_stops": result["best_outbound_stops"],
+                "inbound_stops": result["best_inbound_stops"],
+                "outbound_baggage": result["best_outbound_baggage"],
+                "inbound_baggage": result["best_inbound_baggage"],
+                "outbound_time": result["best_outbound_time"],
+                "inbound_time": result["best_inbound_time"],
+            })
+            rows_to_save.append(best_row)
+
+        # 1. 處理 JSON 追加 logic
         if "json" in self.output["export_format"]:
-            json_path = os.path.join(self.output["data_dir"], f"flights_{timestamp}.json")
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(self.all_results, f, ensure_ascii=False, indent=2)
-            logging.info(f"📁 JSON 資料已成功匯出至: {json_path}")
+            json_path = os.path.join(self.output["data_dir"], "flights_history.json")
+            existing_data = []
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                except Exception:
+                    existing_data = []
 
+            existing_data.extend(rows_to_save)
+
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            logging.info(f"📁 JSON 歷史資料已追加擴充至: {json_path}")
+
+        # 2. 處理 CSV 追加 logic
         if "csv" in self.output["export_format"]:
-            csv_path = os.path.join(self.output["data_dir"], f"flights_{timestamp}.csv")
-            df = pd.DataFrame(self.all_results)
-            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-            logging.info(f"📊 CSV 資料已成功匯出至: {csv_path}")
+            csv_path = os.path.join(self.output["data_dir"], "flights_history.csv")
+            df_new = pd.DataFrame(rows_to_save)
+            
+            file_exists = os.path.exists(csv_path)
+            df_new.to_csv(csv_path, mode="a", index=False, header=not file_exists, encoding="utf-8-sig")
+            logging.info(f"📊 CSV 歷史資料已追加擴充至: {csv_path}")
 
     def run(self):
         logging.info("=================== 啟動大規模機票自動監測引擎 ===================")
@@ -577,7 +642,12 @@ class FlightMonitorEngine:
                     if res and "error" not in res:
                         self.success_count += 1
                         
-                        formatted_price = f"台幣 {res['total_price']}(含稅)"
+                        cheapest = res["cheapest"]
+                        best = res["best"]
+                        is_identical = res["is_identical"]
+
+                        cheap_price = f"台幣 {cheapest['total_price']}(含稅)"
+                        best_price = f"台幣 {best['total_price']}(含稅)"
 
                         data_row = {
                             "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S:%f")[:-3],
@@ -585,30 +655,50 @@ class FlightMonitorEngine:
                             "destination": destination,
                             "departure_date": dep_date,
                             "return_date": ret_date,
-                            "lowest_price": formatted_price,
-                            "outbound_airline": res["outbound_airline"],
-                            "inbound_airline": res["inbound_airline"],
-                            "outbound_flight_number": res["outbound_flight_number"],
-                            "inbound_flight_number": res["inbound_flight_number"],
-                            "outbound_stops": res["outbound_stops"],
-                            "inbound_stops": res["inbound_stops"],
-                            "outbound_baggage": res["outbound_baggage"],
-                            "inbound_baggage": res["inbound_baggage"],
-                            "outbound_time": res["outbound_time"],
-                            "inbound_time": res["inbound_time"],
-                            "outbound_duration": res["outbound_duration"],
-                            "inbound_duration": res["inbound_duration"],
+                            "is_best_and_cheapest_identical": is_identical,
+                            "lowest_price": cheap_price,
+                            "outbound_airline": cheapest["outbound_airline"],
+                            "inbound_airline": cheapest["inbound_airline"],
+                            "outbound_flight_number": cheapest["outbound_flight_number"],
+                            "inbound_flight_number": cheapest["inbound_flight_number"],
+                            "outbound_stops": cheapest["outbound_stops"],
+                            "inbound_stops": cheapest["inbound_stops"],
+                            "outbound_baggage": cheapest["outbound_baggage"],
+                            "inbound_baggage": cheapest["inbound_baggage"],
+                            "outbound_time": cheapest["outbound_time"],
+                            "inbound_time": cheapest["inbound_time"],
+                            "best_price": best_price,
+                            "best_outbound_airline": best["outbound_airline"],
+                            "best_inbound_airline": best["inbound_airline"],
+                            "best_outbound_flight_number": best["outbound_flight_number"],
+                            "best_inbound_flight_number": best["inbound_flight_number"],
+                            "best_outbound_stops": best["outbound_stops"],
+                            "best_inbound_stops": best["inbound_stops"],
+                            "best_outbound_baggage": best["outbound_baggage"],
+                            "best_inbound_baggage": best["inbound_baggage"],
+                            "best_outbound_time": best["outbound_time"],
+                            "best_inbound_time": best["inbound_time"],
                             "url": url,
                         }
                         self.all_results.append(data_row)
 
-                        logging.info(
-                            f"[{day_idx + 1}/{days_ahead}] {origin}->{destination} | "
-                            f"{dep_date} ~ {ret_date} 最低價: {formatted_price} | "
-                            f"(去) {res['outbound_airline']} {res['outbound_flight_number']} {res['outbound_stops']} {res['time_str'] if 'time_str' in res else res['outbound_time']} | "
-                            f"(回) {res['inbound_airline']} {res['inbound_flight_number']} {res['inbound_stops']} {res['inbound_time']} | "
-                            f"[去程行李: {res['outbound_baggage']}] [回程行李: {res['inbound_baggage']}]"
+                        log_msg = (
+                            f"[{day_idx + 1}/{days_ahead}] {origin}->{destination} | {dep_date} ~ {ret_date}\n"
+                            f"  ↳ [最低價]: {cheap_price} | (去) {cheapest['outbound_airline']} {cheapest['outbound_flight_number']} {cheapest['outbound_stops']} {cheapest['outbound_time']} | "
+                            f"(回) {cheapest['inbound_airline']} {cheapest['inbound_flight_number']} {cheapest['inbound_stops']} {cheapest['inbound_time']} | "
+                            f"[去程行李: {cheapest['outbound_baggage']}] [回程行李: {cheapest['inbound_baggage']}]\n"
                         )
+                        
+                        if is_identical:
+                            log_msg += "  ↳ [最佳方案]: 最佳方案與最低價相同"
+                        else:
+                            log_msg += (
+                                f"  ↳ [最佳方案]: {best_price} | (去) {best['outbound_airline']} {best['outbound_flight_number']} {best['outbound_stops']} {best['outbound_time']} | "
+                                f"(回) {best['inbound_airline']} {best['inbound_flight_number']} {best['inbound_stops']} {best['inbound_time']} | "
+                                f"[去程行李: {best['outbound_baggage']}] [回程行李: {best['inbound_baggage']}]"
+                            )
+
+                        logging.info(log_msg)
                     else:
                         self.fail_count += 1
                         error_msg = res.get("error", "未知錯誤") if res else "未知錯誤"

@@ -25,14 +25,21 @@ jobs:
           python -m pip install -r requirements.txt
           python -m playwright install chromium
 
+      - name: Restore Previous History Artifacts
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true # 第一次執行若無歷史檔案則自動忽略錯誤繼續往下 run
+        with:
+          name: flight-data-history
+          path: ./
+
       - name: Run Crawler
         run: python main.py
 
-      - name: Upload results
+      - name: Upload Updated History Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: flight-data-windows
+          name: flight-data-history
           path: |
             data/
             logs/
-            debug/
+          retention-days: 90 # 歷史紀錄在 GitHub Artifact 上保留天數
