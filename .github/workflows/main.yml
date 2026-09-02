@@ -5,16 +5,15 @@ on:
     # 每天 4 次執行 (UTC 時間 0:00, 6:00, 12:00, 18:00)
     # 對應台灣時間：08:00, 14:00, 20:00, 02:00
     - cron: '0 0,6,12,18 * * *'
-  workflow_dispatch: # 允許隨時手動點擊執行
+  workflow_dispatch: 
 
-# 💡 關鍵修正：加入 permissions 設定，允許下載跨次 Workflow 的 Artifacts
 permissions:
   contents: read
   actions: read
 
 jobs:
   build:
-    runs-on: windows-latest  # 指定使用 Windows 雲端環境
+    runs-on: windows-latest  
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,7 +31,7 @@ jobs:
 
       - name: Restore Previous History Artifacts
         uses: dawidd6/action-download-artifact@v6
-        continue-on-error: true # 第一次執行若無歷史檔案則自動忽略錯誤繼續往下 run
+        continue-on-error: true 
         with:
           name: flight-data-history
           path: ./
@@ -47,4 +46,4 @@ jobs:
           path: |
             data/
             logs/
-          retention-days: 90 # 歷史紀錄在 GitHub Artifact 上保留天數
+          retention-days: 90 
