@@ -14,7 +14,7 @@
       "trip_length_days": 14,
       "cabin_class": "Economy"
     },
-        {
+    {
       "origin": "TPE",
       "destination": "VIE",
       "days_ahead": 5,
